@@ -34,3 +34,5 @@ DyDNS.Eml="E-mail";
 DyDNS.Key="Ключ";
 DyDNS.AKey="API-ключ";
 DyDNS.Tokn="Маркер";
+DyDNS.A="DNS A Record";
+DyDNS.AAAA="DNS AAAA Record";

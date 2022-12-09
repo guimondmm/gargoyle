@@ -33,3 +33,5 @@ DyDNS.Eml="E-mail";
 DyDNS.Key="Key";
 DyDNS.AKey="API Key";
 DyDNS.Tokn="Token";
+DyDNS.A="DNS-A-Eintrag";
+DyDNS.AAAA="DNS-AAAA-Eintrag";

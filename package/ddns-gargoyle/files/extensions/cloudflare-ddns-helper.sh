@@ -6,11 +6,12 @@
 # based on Ben Kulbertis cloudflare-update-record.sh found at http://gist.github.com/benkulbertis
 # and on George Johnson's cf-ddns.sh found at https://github.com/gstuartj/cf-ddns.sh
 # Rewritten for Gargoyle Web Interface - Michael Gray 2018
-# CloudFlare API documentation at https://api.cloudflare.com/
+# CloudFlare API documentation at https://developers.cloudflare.com/api
+# To generate API tokens: https://dash.cloudflare.com/profile/api-tokens
 #
-# option username - your cloudflare e-mail
-# option api key - cloudflare api key, you can get it from cloudflare.com/my-account/
-# option domain   - "hostname@yourdomain.TLD"
+# option zone - base zone/domain name (e.g. "example.com")
+# option record - DNS A/AAAA record name (e.g. "@" for zone apex)
+# option token - Cloudflare API Token with "Edit zone DNS" permissions (not the Global API Key)
 #
 # EXIT STATUSES (line up with ddns_updater)
 UPDATE_FAILED=3
@@ -28,69 +29,62 @@ IPV6_REGEX="\(\([0-9A-Fa-f]\{1,4\}:\)\{1,\}\)\(\([0-9A-Fa-f]\{1,4\}\)\{0,1\}\)\(
 
 if [ $# != 7 ] ; then
 	logger -t cloudflare-ddns-helper "Incorrect number of arguments supplied. Exiting"
-	echo "cloudflare-ddns-helper usage:"
-	echo -e "\tusername\tyour cloudflare email"
-	echo -e "\tapi_key\t\tyour cloudflare api key"
-	echo -e "\tdomain\t\thostname@yourdomain.TLD"
-	echo -e "\tlocal_ip\tIP address to be sent to cloudflare"
-	echo -e "\tforce_update\t1 to force update of IP, 0 to exit if already matched"
-	echo -e "\tverbose\t\t0 for low output or 1 for verbose logging"
-	echo -e "\tipv6\t\t0 for IPv4 output or 1 for IPv6"
-	exit 3
+	printf 'cloudflare-ddns-helper usage:\n'
+	printf '\tzone\t\tbase zone/domain name (e.g. \"example.com\")\n'
+	printf '\trecord\t\tDNS A/AAAA record name (e.g. \"@\" or subdomain)\n'
+	printf '\ttoken\t\tCloudflare API Token with \"Edit zone DNS\" permissions (not the Global API Key)\n'
+	printf '\tlocal_ip\tIP address to be sent to Cloudflare\n'
+	printf '\tforce_update\t1 to force update of IP, 0 to exit if already matched\n'
+	printf '\tverbose\t\t0 for low output or 1 for verbose logging\n'
+	printf '\tipv6\t\t0 for IPv4 output or 1 for IPv6\n'
+	exit $UPDATE_FAILED
 fi
 
-DOMAIN=$1
-USERNAME=$2
-API_KEY=$3
+ZONE=$1
+RECORD=$2
+TOKEN=$3
 LOCAL_IP=$4
 FORCE_UPDATE=$5
 VERBOSE=$6
 IPV6=$7
 
-[ -z "$USERNAME" ] && {
-	logger -t cloudflare-ddns-helper "Invalid username"
-	exit 3
+[ -z "$ZONE" ] && {
+	logger -t cloudflare-ddns-helper "Invalid zone/domain"
+	exit $UPDATE_FAILED
 }
-[ -z "$API_KEY" ] && {
-	logger -t cloudflare-ddns-helper "Invalid API key"
-	exit 3
+[ -z "$RECORD" ] && {
+	logger -t cloudflare-ddns-helper "Invalid DNS record"
+	exit $UPDATE_FAILED
 }
-[ -z "$DOMAIN" ] && {
-	logger -t cloudflare-ddns-helper "Invalid domain"
-	exit 3
+[ -z "$TOKEN" ] && {
+	logger -t cloudflare-ddns-helper "Invalid API token"
+	exit $UPDATE_FAILED
 }
 [ -z "$LOCAL_IP" ] && {
 	logger -t cloudflare-ddns-helper "Invalid local IP"
-	exit 3
+	exit $UPDATE_FAILED
 }
 
-[ $VERBOSE -eq  1 ] && logger -t cloudflare-ddns-helper "Username: $USERNAME, API KEY: $API_KEY"
-[ $VERBOSE -eq  1 ] && logger -t cloudflare-ddns-helper "Domain: $DOMAIN, Local IP: $LOCAL_IP"
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Local IP: $LOCAL_IP, Token: $(echo "$TOKEN" | cut -c 1-8)..."
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Zone: $ZONE, Record: $RECORD"
 
-# Split input domain into host and domain
-# @example.com for "domain record"
-# host.sub@example.com for a "host record"
-HOST=$(printf %s "$DOMAIN" | cut -d@ -f1)
-DOMAIN=$(printf %s "$DOMAIN" | cut -d@ -f2)
+# Format the FQDN for the zone and record name
+# zone = base domain e.g. example.com
+# record = DNS A/AAAA record name e.g. subdomain (or @ for zone apex)
+# host = FQDN e.g. subdomain.example.com for subdomain (or example.com for zone apex)
+[ "$RECORD" = '@' ] && HOST="$ZONE" # zone apex
+[ "$RECORD" != "$ZONE" ] && HOST="${RECORD}.$ZONE" # subdomain
 
-# Change this to APIv4 compliant format
-# domain = base domain e.g. example.com
-# host = FQDN e.g. example.com for "domain record" or host.sub.example.com for "host record"
-# if handling a domain record then make host = domain
-[ -z "$HOST" ] && HOST=$DOMAIN
-# if handling host record then format
-[ "$HOST" != "$DOMAIN" ] && HOST="${HOST}.$DOMAIN"
-[ $VERBOSE -eq  1 ] && logger -t cloudflare-ddns-helper "Host: $HOST, Domain: $DOMAIN"
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Host: $HOST"
 
 command_runner()
 {
-	[ $VERBOSE -eq  1 ] && logger -t cloudflare-ddns-helper "cmd: $RUNCMD"
+	[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "cmd: $RUNCMD"
 	eval "$RUNCMD"
 	ERR=$?
 	if [ $ERR != 0 ] ; then
 		logger -t cloudflare-ddns-helper "cURL error: $ERR"
-		logger -t cloudflare-ddns-helper $(cat $ERRFILE)
-		#echo "$(cat $ERRFILE)"
+		logger -t cloudflare-ddns-helper "$(cat $ERRFILE)"
 		return 1
 	fi
 	
@@ -98,8 +92,7 @@ command_runner()
 	STATUS=$(grep '"success": \?true' $DATAFILE)
 	if [ -z "$STATUS" ]; then
 		logger -t cloudflare-ddns-helper "Cloudflare responded with an error"
-		logger -t cloudflare-ddns-helper $(cat $DATAFILE)
-		#echo "$(cat $DATAFILE)"
+		logger -t cloudflare-ddns-helper "$(cat $DATAFILE)"
 		return 1
 	fi
 	
@@ -110,50 +103,49 @@ command_runner()
 CMDBASE="curl -RsS -o $DATAFILE --stderr $ERRFILE"
 
 # force IP version
-[ $IPV6 -eq 0 ] && CMDBASE="$CMDBASE -4 " || CMDBASE="$CMDBASE -6 "
+[ "$IPV6" -eq 0 ] && CMDBASE="$CMDBASE -4 " || CMDBASE="$CMDBASE -6 "
 
 # add headers
-CMDBASE="$CMDBASE --header 'X-Auth-Email: $USERNAME' "
-CMDBASE="$CMDBASE --header 'X-Auth-Key: $API_KEY' "
+CMDBASE="$CMDBASE --header 'Authorization: Bearer $TOKEN' "
 CMDBASE="$CMDBASE --header 'Content-Type: application/json' "
 
 # fetch zone id for domain
-RUNCMD="$CMDBASE --request GET '$URLBASE/zones?name=$DOMAIN'"
-command_runner || exit 3
+RUNCMD="$CMDBASE --request GET '$URLBASE/zones?name=$ZONE'"
+command_runner || exit $UPDATE_FAILED
 
 ZONEID=$(grep -o '"id": \?"[^"]*' $DATAFILE | grep -o '[^"]*$' | head -1)
 if [ -z "$ZONEID" ] ; then
-	logger -t cloudflare-ddns-helper "Could not detect zone ID for domain: $DOMAIN"
-	exit 3
+	logger -t cloudflare-ddns-helper "Could not detect zone ID for domain: $ZONE"
+	exit $UPDATE_FAILED
 fi
-[ $VERBOSE -eq  1 ] && logger -t cloudflare-ddns-helper "Zone ID for $DOMAIN: $ZONEID"
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Zone ID for $ZONE: $ZONEID"
 
 # get A or AAAA record
-[ $IPV6 -eq 0 ] && TYPE="A" || TYPE="AAAA"
+[ "$IPV6" -eq 0 ] && TYPE="A" || TYPE="AAAA"
 RUNCMD="$CMDBASE --request GET '$URLBASE/zones/$ZONEID/dns_records?name=$HOST&type=$TYPE'"
-command_runner || exit 3
+command_runner || exit $UPDATE_FAILED
 
 RECORDID=$(grep -o '"id": \?"[^"]*' $DATAFILE | grep -o '[^"]*$' | head -1)
 if [ -z "$RECORDID" ] ; then
 	logger -t cloudflare-ddns-helper "Could not detect record ID for host: $HOST"
-	exit 3
+	exit $UPDATE_FAILED
 fi
-[ $VERBOSE -eq  1 ] && logger -t cloudflare-ddns-helper "Record ID for $HOST: $RECORDID"
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Record ID for $HOST: $RECORDID"
 
 # if we got this far, we can check the data for the current IP address
 DATA=$(grep -o '"content": \?"[^"]*' $DATAFILE | grep -o '[^"]*$' | head -1)
-[ $IPV6 -eq 0 ] \
+[ "$IPV6" -eq 0 ] \
 	&& DATA=$(printf "%s" "$DATA" | grep -m 1 -o "$IPV4_REGEX") \
 	|| DATA=$(printf "%s" "$DATA" | grep -m 1 -o "$IPV6_REGEX")
-[ $VERBOSE -eq  1 ] && logger -t cloudflare-ddns-helper "Remote IP for $HOST: $DATA"
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Remote IP for $HOST: $DATA"
 
 if [ -n "$DATA" ]; then
 	[ "$DATA" = "$LOCAL_IP" ] && {
-		[ $FORCE_UPDATE = 0 ] && {
-			[ $VERBOSE -eq  1 ] && logger -t cloudflare-ddns-helper "Remote IP = Local IP, no update needed"
-			exit 4
+		[ "$FORCE_UPDATE" = 0 ] && {
+			[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Remote IP = Local IP, no update needed"
+			exit $UPDATE_NOT_NEEDED
 		}
-		[ $VERBOSE -eq  1 ] && logger -t cloudflare-ddns-helper "Remote IP = Local IP, force update requested"
+		[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Remote IP = Local IP, force update requested"
 	}
 fi
 
@@ -163,8 +155,7 @@ cat > $DATAFILE << EOF
 EOF
 
 RUNCMD="$CMDBASE --request PUT --data @$DATAFILE '$URLBASE/zones/$ZONEID/dns_records/$RECORDID'"
-command_runner || exit 3
+command_runner || exit $UPDATE_FAILED
 
-[ $VERBOSE -eq  1 ] && logger -t cloudflare-ddns-helper "Remote IP updated to $LOCAL_IP"
-exit 5
-
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Remote IP updated to $LOCAL_IP"
+exit $UPDATE_SUCCESSFUL
