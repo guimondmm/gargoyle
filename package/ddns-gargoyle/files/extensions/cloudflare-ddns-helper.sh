@@ -27,10 +27,10 @@ IPV4_REGEX="[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}"
 # IPv6       ( ( 0-9a-f  1-4char ":") min 1x) ( ( 0-9a-f  1-4char   )optional) ( (":" 0-9a-f 1-4char  ) min 1x)
 IPV6_REGEX="\(\([0-9A-Fa-f]\{1,4\}:\)\{1,\}\)\(\([0-9A-Fa-f]\{1,4\}\)\{0,1\}\)\(\(:[0-9A-Fa-f]\{1,4\}\)\{1,\}\)"
 
-if [ $# != 7 ] ; then
+if [ $# -ne 7 ] ; then
 	logger -t cloudflare-ddns-helper "Incorrect number of arguments supplied. Exiting"
 	printf 'cloudflare-ddns-helper usage:\n'
-	printf '\tdomain\t\tbase zone/domain name (e.g., "example.com")\n'
+	printf '\tdomain\t\tdomain name (e.g., "example.com")\n'
 	printf '\thost\t\tDNS A/AAAA record name (e.g., "@" or "subdomain")\n'
 	printf '\ttoken\t\tCloudflare API Token with "Edit zone DNS" permissions (not the Global API Key)\n'
 	printf '\tlocal_ip\tIP address to be sent to Cloudflare\n'
@@ -49,24 +49,24 @@ VERBOSE=$6
 IPV6=$7
 
 [ -z "$DOMAIN" ] && {
-	logger -t cloudflare-ddns-helper "Invalid domain"
+	logger -t cloudflare-ddns-helper "Domain is empty (expected a domain name)"
 	exit $UPDATE_FAILED
 }
 [ -z "$HOST" ] && {
-	logger -t cloudflare-ddns-helper "Invalid host"
+	logger -t cloudflare-ddns-helper "Host is empty (expected '@' or a record name)"
 	exit $UPDATE_FAILED
 }
 [ -z "$TOKEN" ] && {
-	logger -t cloudflare-ddns-helper "Invalid API token"
+	logger -t cloudflare-ddns-helper "API token is empty (expected a bearer auth token)"
 	exit $UPDATE_FAILED
 }
 [ -z "$LOCAL_IP" ] && {
-	logger -t cloudflare-ddns-helper "Invalid local IP"
+	logger -t cloudflare-ddns-helper "Local IP is empty"
 	exit $UPDATE_FAILED
 }
 
-[ "$VERBOSE" -eq  1 ] && logger -t cloudflare-ddns-helper "API Token: starts with $(printf '%s' "$TOKEN" | cut -c 1-7)"
-[ "$VERBOSE" -eq  1 ] && logger -t cloudflare-ddns-helper "Zone: $DOMAIN, Record: $HOST, Local IP: $LOCAL_IP"
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "API Token: starts with $(printf '%s' "$TOKEN" | cut -c 1-7)"
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Zone: $DOMAIN, Record: $HOST, Local IP: $LOCAL_IP"
 
 # Format the FQDN for the zone and record, e.g., subdomain.example.com for subdomain (or example.com for zone apex)
 [ "$HOST" = '@' ] && HOST="$DOMAIN" # zone apex
@@ -79,7 +79,7 @@ command_runner()
 	[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "cmd: $RUNCMD"
 	eval "$RUNCMD"
 	ERR=$?
-	if [ $ERR != 0 ] ; then
+	if [ $ERR -ne 0 ] ; then
 		logger -t cloudflare-ddns-helper "cURL error: $ERR"
 		logger -t cloudflare-ddns-helper "$(cat $ERRFILE)"
 		return 1
@@ -138,7 +138,7 @@ DATA=$(grep -o '"content": \?"[^"]*' $DATAFILE | grep -o '[^"]*$' | head -1)
 
 if [ -n "$DATA" ]; then
 	[ "$DATA" = "$LOCAL_IP" ] && {
-		[ "$FORCE_UPDATE" = 0 ] && {
+		[ "$FORCE_UPDATE" -eq 0 ] && {
 			[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Remote IP = Local IP, no update needed"
 			exit $UPDATE_NOT_NEEDED
 		}
