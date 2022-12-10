@@ -9,8 +9,8 @@
 # CloudFlare API documentation at https://developers.cloudflare.com/api
 # To generate API tokens: https://dash.cloudflare.com/profile/api-tokens
 #
-# option zone - base zone/domain name (e.g. "example.com")
-# option record - DNS A/AAAA record name (e.g. "@" for zone apex)
+# option domain - base zone/domain name (e.g., "example.com")
+# option host - DNS A/AAAA record name (e.g., "@" for zone apex)
 # option token - Cloudflare API Token with "Edit zone DNS" permissions (not the Global API Key)
 #
 # EXIT STATUSES (line up with ddns_updater)
@@ -30,9 +30,9 @@ IPV6_REGEX="\(\([0-9A-Fa-f]\{1,4\}:\)\{1,\}\)\(\([0-9A-Fa-f]\{1,4\}\)\{0,1\}\)\(
 if [ $# != 7 ] ; then
 	logger -t cloudflare-ddns-helper "Incorrect number of arguments supplied. Exiting"
 	printf 'cloudflare-ddns-helper usage:\n'
-	printf '\tzone\t\tbase zone/domain name (e.g. \"example.com\")\n'
-	printf '\trecord\t\tDNS A/AAAA record name (e.g. \"@\" or subdomain)\n'
-	printf '\ttoken\t\tCloudflare API Token with \"Edit zone DNS\" permissions (not the Global API Key)\n'
+	printf '\tdomain\t\tbase zone/domain name (e.g., "example.com")\n'
+	printf '\thost\t\tDNS A/AAAA record name (e.g., "@" or "subdomain")\n'
+	printf '\ttoken\t\tCloudflare API Token with "Edit zone DNS" permissions (not the Global API Key)\n'
 	printf '\tlocal_ip\tIP address to be sent to Cloudflare\n'
 	printf '\tforce_update\t1 to force update of IP, 0 to exit if already matched\n'
 	printf '\tverbose\t\t0 for low output or 1 for verbose logging\n'
@@ -40,20 +40,20 @@ if [ $# != 7 ] ; then
 	exit $UPDATE_FAILED
 fi
 
-ZONE=$1
-RECORD=$2
+DOMAIN=$1 # e.g., "example.com"
+HOST=$2 # e.g., "subdomain" (or "@" for zone apex)
 TOKEN=$3
 LOCAL_IP=$4
 FORCE_UPDATE=$5
 VERBOSE=$6
 IPV6=$7
 
-[ -z "$ZONE" ] && {
-	logger -t cloudflare-ddns-helper "Invalid zone/domain"
+[ -z "$DOMAIN" ] && {
+	logger -t cloudflare-ddns-helper "Invalid domain"
 	exit $UPDATE_FAILED
 }
-[ -z "$RECORD" ] && {
-	logger -t cloudflare-ddns-helper "Invalid DNS record"
+[ -z "$HOST" ] && {
+	logger -t cloudflare-ddns-helper "Invalid host"
 	exit $UPDATE_FAILED
 }
 [ -z "$TOKEN" ] && {
@@ -65,17 +65,14 @@ IPV6=$7
 	exit $UPDATE_FAILED
 }
 
-[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Local IP: $LOCAL_IP, Token: $(echo "$TOKEN" | cut -c 1-8)..."
-[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Zone: $ZONE, Record: $RECORD"
+[ "$VERBOSE" -eq  1 ] && logger -t cloudflare-ddns-helper "API Token: starts with $(printf '%s' "$TOKEN" | cut -c 1-7)"
+[ "$VERBOSE" -eq  1 ] && logger -t cloudflare-ddns-helper "Zone: $DOMAIN, Record: $HOST, Local IP: $LOCAL_IP"
 
-# Format the FQDN for the zone and record name
-# zone = base domain e.g. example.com
-# record = DNS A/AAAA record name e.g. subdomain (or @ for zone apex)
-# host = FQDN e.g. subdomain.example.com for subdomain (or example.com for zone apex)
-[ "$RECORD" = '@' ] && HOST="$ZONE" # zone apex
-[ "$RECORD" != "$ZONE" ] && HOST="${RECORD}.$ZONE" # subdomain
+# Format the FQDN for the zone and record, e.g., subdomain.example.com for subdomain (or example.com for zone apex)
+[ "$HOST" = '@' ] && HOST="$DOMAIN" # zone apex
+[ "$HOST" != "$DOMAIN" ] && HOST="${HOST}.$DOMAIN" # subdomain
 
-[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Host: $HOST"
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "FQDN: $HOST"
 
 command_runner()
 {
@@ -110,15 +107,15 @@ CMDBASE="$CMDBASE --header 'Authorization: Bearer $TOKEN' "
 CMDBASE="$CMDBASE --header 'Content-Type: application/json' "
 
 # fetch zone id for domain
-RUNCMD="$CMDBASE --request GET '$URLBASE/zones?name=$ZONE'"
+RUNCMD="$CMDBASE --request GET '$URLBASE/zones?name=$DOMAIN'"
 command_runner || exit $UPDATE_FAILED
 
 ZONEID=$(grep -o '"id": \?"[^"]*' $DATAFILE | grep -o '[^"]*$' | head -1)
 if [ -z "$ZONEID" ] ; then
-	logger -t cloudflare-ddns-helper "Could not detect zone ID for domain: $ZONE"
+	logger -t cloudflare-ddns-helper "Could not detect zone ID for domain: $DOMAIN"
 	exit $UPDATE_FAILED
 fi
-[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Zone ID for $ZONE: $ZONEID"
+[ "$VERBOSE" -eq 1 ] && logger -t cloudflare-ddns-helper "Zone ID for $DOMAIN: $ZONEID"
 
 # get A or AAAA record
 [ "$IPV6" -eq 0 ] && TYPE="A" || TYPE="AAAA"
